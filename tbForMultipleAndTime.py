@@ -194,11 +194,13 @@ class TaskBot:
                 f"Category: {task['category']}\n"
                 f"Due Date: {task['due_date']}"
             )
+            return ConversationHandler.END
         except ValueError:
             await update.message.reply_text(
                 "Invalid date format. Please use DD-MM-YYYY.\n"
                 "Task creation cancelled."
             )
+            return ConversationHandler.END
 
     async def set_frequency(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the frequency command"""
@@ -361,45 +363,61 @@ class TaskBot:
             message += f"📁 {category} ({task_count} tasks)\n"
         
         await update.message.reply_text(message)
+    
+    async def cancel_task(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Cancel the task creation process"""
+        await update.message.reply_text(
+            "Task creation cancelled. You can start a new task with /new"
+        )
+        return ConversationHandler.END
 
     def setup_handlers(self):
         """Set up all conversation handlers"""
-        # Create task conversation handler
+        # Create task conversation handler with modified states
         create_conv_handler = ConversationHandler(
             entry_points=[CommandHandler('new', self.new_task)],
             states={
-                TASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_task_name)],
+                TASK_NAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_task_name)
+                ],
                 TASK_CATEGORY: [
                     CallbackQueryHandler(self.receive_category),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_task_name)
                 ],
-                TASK_DUE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_due_date)]
+                TASK_DUE_DATE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_due_date)
+                ]
             },
-            fallbacks=[]
+            fallbacks=[
+                CommandHandler('cancel', self.cancel_task),
+                MessageHandler(filters.COMMAND, self.cancel_task)
+            ],
+            name="create_task",
+            persistent=False,
+            allow_reentry=True
         )
 
-        # Delete task conversation handler
+        # Rest of your handlers remain the same...
         delete_conv_handler = ConversationHandler(
             entry_points=[CommandHandler('delete', self.delete_task)],
             states={
                 DELETE_CONFIRMATION: [CallbackQueryHandler(self.confirm_delete)]
             },
-            fallbacks=[]
+            fallbacks=[CommandHandler('cancel', self.cancel_task)]
         )
 
-        # Frequency conversation handler
         freq_conv_handler = ConversationHandler(
             entry_points=[CommandHandler('frequency', self.set_frequency)],
             states={
                 FREQUENCY_SELECTION: [CallbackQueryHandler(self.handle_frequency_selection)]
             },
-            fallbacks=[]
+            fallbacks=[CommandHandler('cancel', self.cancel_task)]
         )
 
-        # Add all handlers
+        # Make sure these handlers are added in this specific order
         self.app.add_handler(CommandHandler('start', self.start))
+        self.app.add_handler(create_conv_handler)  # Put create_conv_handler early
         self.app.add_handler(CommandHandler('tasklist', self.tasklist))
-        self.app.add_handler(create_conv_handler)
         self.app.add_handler(delete_conv_handler)
         self.app.add_handler(freq_conv_handler)
         self.app.add_handler(CommandHandler('categories', self.list_categories))
