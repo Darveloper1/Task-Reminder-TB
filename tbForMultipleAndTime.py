@@ -74,10 +74,13 @@ class TaskBot:
         )
 
     async def send_reminders(self, context: ContextTypes.DEFAULT_TYPE):
-        """Send reminders to users based on their frequency settings"""
+        """Send reminders to users based on their frequency settings and cleanup old tasks"""
         current_time = datetime.now(pytz.timezone('Asia/Singapore'))
         
         for user_id, user_data in self.user_data.items():
+            # First cleanup old tasks
+            await self.cleanup_old_tasks(context, user_id, user_data)
+            
             frequency = user_data.get('reminder_frequency', '24h')
             last_reminder = datetime.fromisoformat(user_data.get('last_reminder', '2000-01-01'))
             
@@ -294,6 +297,40 @@ class TaskBot:
             f"Deleted task: {deleted_task['name']}"
         )
         return ConversationHandler.END
+    
+    async def cleanup_old_tasks(self, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_data: dict):
+        """Remove tasks that are more than a day past their due date"""
+        current_date = datetime.now(pytz.timezone('Asia/Singapore')).date()
+        tasks_to_remove = []
+        
+        for index, task in enumerate(user_data['tasks']):
+            task_due_date = datetime.strptime(task['due_date'], '%Y-%m-%d').date()
+            days_overdue = (current_date - task_due_date).days
+            
+            if days_overdue > 1:
+                tasks_to_remove.append(index)
+        
+        # Remove tasks in reverse order to maintain correct indices
+        for index in reversed(tasks_to_remove):
+            removed_task = user_data['tasks'].pop(index)
+            
+            # Check if we need to remove the category
+            category = removed_task['category']
+            if not any(task['category'] == category for task in user_data['tasks']):
+                user_data['categories'].remove(category)
+                
+        if tasks_to_remove:
+            self.save_data()
+            if len(tasks_to_remove) == 1:
+                await context.bot.send_message(
+                    user_id, 
+                    "1 expired task has been automatically removed."
+                )
+            else:
+                await context.bot.send_message(
+                    user_id, 
+                    f"{len(tasks_to_remove)} expired tasks have been automatically removed."
+                )
 
     def setup_handlers(self):
         """Set up all conversation handlers"""
