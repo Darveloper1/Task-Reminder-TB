@@ -7,6 +7,8 @@ Initial Draft #1 (27-10-23):
     1. Able to create and store concurrent tasks, along with their due dates and reminder frequency
     2. Able to retrieve current date, and down to the hour ideally
 
+<br>
+
 Update #2 (02-12-24):
 1. Bot written in Python
 2. Options: 
@@ -17,3 +19,15 @@ Update #2 (02-12-24):
     1. Create: Users can create new tasks
     2. Read: View tasks and run a cron to get updates on a regular basis (every day, every other day, every week)
     3. Delete: Users can delete tasks and tasks that are past due date are deleted
+
+<br>
+
+Running the Bot using AWS EC2:
+1. Launch EC2 instance (Amazon Linux + t2.micro)
+2. Add inbound rule for security group (SSH Port 22 from My IP)
+3. Connect to EC2 instance on terminal
+4. Set up python environment
+5. Set up project
+6. Create bot.py (Here is where you will add the code + Telegram Token Key)
+7. Set up Systemd Service
+3. Run bot
