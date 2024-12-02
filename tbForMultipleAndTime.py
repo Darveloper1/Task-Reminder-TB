@@ -4,6 +4,8 @@ import json
 from datetime import datetime, time, timedelta
 import os
 import pytz
+from telegram.ext import JobQueue
+
 
 # States for conversation handlers
 TASK_NAME, TASK_CATEGORY, TASK_DUE_DATE = range(3)
@@ -16,13 +18,17 @@ class TaskBot:
         self.user_data = {}  # Format: {user_id: {'tasks': [], 'categories': set(), 'reminder_frequency': '24h'}}
         self.load_data()
         
-        # Create application
-        self.app = ApplicationBuilder().token(token).build()
+        # Create application with job queue
+        self.app = (
+            ApplicationBuilder()
+            .token(token)
+            .job_queue(JobQueue())
+            .build()
+        )
+        
         self.setup_handlers()
-        
         self.setup_reminder_job()
-        
-        # Frequency options
+
         self.frequency_options = {
             '24h': {'hours': 24, 'label': 'Every 24 hours'},
             '48h': {'hours': 48, 'label': 'Every 48 hours'},
@@ -64,13 +70,11 @@ class TaskBot:
         """Setup daily job to check and send reminders"""
         # Schedule job to run at 9AM SGT (UTC+8)
         target_time = time(hour=9, minute=0)
-        target_tz = pytz.timezone('Asia/Singapore')
         
         # Add daily job
         self.app.job_queue.run_daily(
             self.send_reminders,
-            time=target_time,
-            timezone=target_tz
+            time=target_time
         )
 
     async def send_reminders(self, context: ContextTypes.DEFAULT_TYPE):
@@ -130,6 +134,16 @@ class TaskBot:
         user_id = context.user_data['user_id']
         user_data = self.get_user_data(user_id)
         
+        # If we're expecting a new category name (set by receive_category)
+        if context.user_data.get('waiting_for_new_category'):
+            context.user_data['category'] = update.message.text
+            context.user_data['waiting_for_new_category'] = False
+            await update.message.reply_text(
+                "When is this task due? (Format: DD-MM-YYYY)"
+            )
+            return TASK_DUE_DATE
+        
+        # Regular flow for task name
         context.user_data['task_name'] = update.message.text
         
         # Create keyboard with user's existing categories
@@ -148,12 +162,13 @@ class TaskBot:
         await query.answer()
         
         if query.data == "new_category":
+            context.user_data['waiting_for_new_category'] = True
             await query.message.reply_text("Enter the name of the new category:")
-            return TASK_CATEGORY
+            return TASK_NAME  # Return to receive_task_name to handle the new category input
         
         context.user_data['category'] = query.data
         await query.message.reply_text(
-            "When is this task due? (Format: YYYY-MM-DD)"
+            "When is this task due? (Format: DD-MM-YYYY)"
         )
         return TASK_DUE_DATE
 
@@ -163,7 +178,7 @@ class TaskBot:
         user_data = self.get_user_data(user_id)
         
         try:
-            due_date = datetime.strptime(update.message.text, '%Y-%m-%d').strftime('%Y-%m-%d')
+            due_date = datetime.strptime(update.message.text, '%d-%m-%Y').strftime('%d-%m-%Y')
             task = {
                 'name': context.user_data['task_name'],
                 'category': context.user_data['category'],
@@ -181,11 +196,9 @@ class TaskBot:
             )
         except ValueError:
             await update.message.reply_text(
-                "Invalid date format. Please use YYYY-MM-DD.\n"
+                "Invalid date format. Please use DD-MM-YYYY.\n"
                 "Task creation cancelled."
             )
-        
-        return ConversationHandler.END
 
     async def set_frequency(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle the frequency command"""
@@ -304,7 +317,7 @@ class TaskBot:
         tasks_to_remove = []
         
         for index, task in enumerate(user_data['tasks']):
-            task_due_date = datetime.strptime(task['due_date'], '%Y-%m-%d').date()
+            task_due_date = datetime.strptime(task['due_date'], '%d-%m-%Y').date()
             days_overdue = (current_date - task_due_date).days
             
             if days_overdue > 1:
@@ -331,6 +344,23 @@ class TaskBot:
                     user_id, 
                     f"{len(tasks_to_remove)} expired tasks have been automatically removed."
                 )
+    
+    async def list_categories(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List all categories for the user"""
+        user_id = update.effective_user.id
+        user_data = self.get_user_data(user_id)
+        
+        if not user_data['categories']:
+            await update.message.reply_text("You don't have any categories yet!")
+            return
+        
+        # Create message showing categories and number of tasks in each
+        message = "Your Categories:\n\n"
+        for category in sorted(user_data['categories']):
+            task_count = len([task for task in user_data['tasks'] if task['category'] == category])
+            message += f"📁 {category} ({task_count} tasks)\n"
+        
+        await update.message.reply_text(message)
 
     def setup_handlers(self):
         """Set up all conversation handlers"""
@@ -372,12 +402,13 @@ class TaskBot:
         self.app.add_handler(create_conv_handler)
         self.app.add_handler(delete_conv_handler)
         self.app.add_handler(freq_conv_handler)
+        self.app.add_handler(CommandHandler('categories', self.list_categories))
 
     def run(self):
         """Start the bot"""
         self.app.run_polling()
 
 if __name__ == '__main__':
-    TOKEN = "TELEGRAM_BOT_TOKEN"
+    TOKEN = "6391363973:AAG3epv_hIdDzQAtYBPzkCZDoTttpdL1KDs"
     bot = TaskBot(TOKEN)
     bot.run()
