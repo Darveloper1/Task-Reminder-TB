@@ -409,6 +409,6 @@ class TaskBot:
         self.app.run_polling()
 
 if __name__ == '__main__':
-    TOKEN = "6391363973:AAG3epv_hIdDzQAtYBPzkCZDoTttpdL1KDs"
+    TOKEN = "YOUR_TOKEN_KEY"
     bot = TaskBot(TOKEN)
     bot.run()
