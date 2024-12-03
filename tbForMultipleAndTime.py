@@ -46,7 +46,7 @@ class TaskBot:
                         'tasks': user_data['tasks'],
                         'categories': set(user_data['categories']),
                         'reminder_frequency': user_data.get('reminder_frequency', '24h'),
-                        'last_reminder': user_data.get('last_reminder', '2000-01-01')
+                        'last_reminder': user_data.get('last_reminder', '01-01-2000')
                     }
                     for user_id, user_data in data.items()
                 }
@@ -59,7 +59,7 @@ class TaskBot:
                 'tasks': user_data['tasks'],
                 'categories': list(user_data['categories']),
                 'reminder_frequency': user_data.get('reminder_frequency', '24h'),
-                'last_reminder': user_data.get('last_reminder', '2000-01-01')
+                'last_reminder': user_data.get('last_reminder', '01-01-2000')
             }
             for user_id, user_data in self.user_data.items()
         }
@@ -78,23 +78,28 @@ class TaskBot:
         )
 
     async def send_reminders(self, context: ContextTypes.DEFAULT_TYPE):
-        """Send reminders to users based on their frequency settings and cleanup old tasks"""
+        """Send reminders to users based on their frequency settings"""
         current_time = datetime.now(pytz.timezone('Asia/Singapore'))
+        print(f"Running reminders check at {current_time}")  # Debug log
         
         for user_id, user_data in self.user_data.items():
-            # First cleanup old tasks
-            await self.cleanup_old_tasks(context, user_id, user_data)
-            
-            frequency = user_data.get('reminder_frequency', '24h')
-            last_reminder = datetime.fromisoformat(user_data.get('last_reminder', '2000-01-01'))
-            
-            # Check if it's time to send reminder based on frequency
-            hours_diff = (current_time - last_reminder).total_seconds() / 3600
-            if hours_diff >= self.frequency_options[frequency]['hours']:
-                if user_data['tasks']:
-                    await self.send_task_list(context, user_id, is_reminder=True)
-                    self.user_data[user_id]['last_reminder'] = current_time.isoformat()
-                    self.save_data()
+            try:
+                # First cleanup old tasks
+                await self.cleanup_old_tasks(context, user_id, user_data)
+                
+                frequency = user_data.get('reminder_frequency', '24h')
+                last_reminder = datetime.strptime(user_data.get('last_reminder', '01-01-2000'), '%d-%m-%Y')
+                
+                # Check if it's time to send reminder based on frequency
+                hours_diff = (current_time - last_reminder.astimezone(pytz.timezone('Asia/Singapore'))).total_seconds() / 3600
+                if hours_diff >= self.frequency_options[frequency]['hours']:
+                    if user_data['tasks']:
+                        print(f"Sending reminder to user {user_id}")  # Debug log
+                        await self.send_task_list(context, user_id, is_reminder=True)
+                        self.user_data[user_id]['last_reminder'] = current_time.isoformat()
+                        self.save_data()
+            except Exception as e:
+                print(f"Error sending reminder to user {user_id}: {str(e)}")  # Debug log
 
     def get_user_data(self, user_id: int):
         """Get or initialize user data"""
@@ -103,7 +108,7 @@ class TaskBot:
                 'tasks': [],
                 'categories': set(),
                 'reminder_frequency': '24h',
-                'last_reminder': datetime.now(pytz.timezone('Asia/Singapore')).isoformat()
+                'last_reminder': datetime.now(pytz.timezone('Asia/Singapore')).strftime('%d-%m-%Y')
             }
         return self.user_data[user_id]
 
