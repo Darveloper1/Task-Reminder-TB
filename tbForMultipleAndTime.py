@@ -327,7 +327,7 @@ class TaskBot:
             task_due_date = datetime.strptime(task['due_date'], '%d-%m-%Y').date()
             days_overdue = (current_date - task_due_date).days
             
-            if days_overdue > 1:
+            if days_overdue > 0:
                 tasks_to_remove.append(index)
         
         # Remove tasks in reverse order to maintain correct indices
