@@ -11,6 +11,7 @@ from telegram.ext import JobQueue
 TASK_NAME, TASK_CATEGORY, TASK_DUE_DATE = range(3)
 DELETE_CONFIRMATION = 0
 FREQUENCY_SELECTION = 0
+TIME_SELECTION = 1
 
 class TaskBot:
     def __init__(self, token):
@@ -25,15 +26,23 @@ class TaskBot:
             .job_queue(JobQueue())
             .build()
         )
-        
-        self.setup_handlers()
-        self.setup_reminder_job()
 
         self.frequency_options = {
             '24h': {'hours': 24, 'label': 'Every 24 hours'},
             '48h': {'hours': 48, 'label': 'Every 48 hours'},
             '1w': {'hours': 168, 'label': 'Every week'}
         }
+
+        self.time_options = {
+            '8am': {'hour': 0, 'label': '8:00 AM'},
+            '9am': {'hour': 1, 'label': '9:00 AM'},
+            '10am': {'hour': 2, 'label': '10:00 AM'},
+            '11am': {'hour': 3, 'label': '11:00 AM'},
+            '12pm': {'hour': 4, 'label': '12:00 PM'}
+        }
+
+        self.setup_handlers()
+        self.setup_reminder_job()
 
     def load_data(self):
         """Load all users' tasks and categories from file if it exists"""
@@ -67,20 +76,31 @@ class TaskBot:
             json.dump(serializable_data, f)
 
     def setup_reminder_job(self):
-        """Setup daily job to check and send reminders"""
-        # Schedule job to run at 9AM SGT (UTC+8)
-        target_time = time(hour=9, minute=0)
+        """Setup daily jobs to check and send reminders for all configured times"""
+        # Clear existing jobs
+        if self.app.job_queue:
+            self.app.job_queue.stop()
+            self.app.job_queue.start()
         
-        # Add daily job
-        self.app.job_queue.run_daily(
-            self.send_reminders,
-            time=target_time
-        )
+        # Get unique reminder times from all users
+        reminder_times = set()
+        for user_data in self.user_data.values():
+            reminder_times.add(user_data.get('reminder_time', '9am'))
+        
+        # Set up a job for each unique time
+        for reminder_time in reminder_times:
+            hour = self.time_options[reminder_time]['hour']
+            target_time = time(hour=hour, minute=0)
+            
+            self.app.job_queue.run_daily(
+                self.send_reminders,
+                time=target_time
+            )
 
     async def send_reminders(self, context: ContextTypes.DEFAULT_TYPE):
         """Send reminders to users based on their frequency settings"""
         current_time = datetime.now(pytz.timezone('Asia/Singapore'))
-        print(f"Running reminders check at {current_time}")  # Debug log
+        print(f"Running reminders check at {current_time}")
         
         for user_id, user_data in self.user_data.items():
             try:
@@ -94,12 +114,12 @@ class TaskBot:
                 hours_diff = (current_time - last_reminder.astimezone(pytz.timezone('Asia/Singapore'))).total_seconds() / 3600
                 if hours_diff >= self.frequency_options[frequency]['hours']:
                     if user_data['tasks']:
-                        print(f"Sending reminder to user {user_id}")  # Debug log
+                        print(f"Sending reminder to user {user_id}")
                         await self.send_task_list(context, user_id, is_reminder=True)
                         self.user_data[user_id]['last_reminder'] = current_time.isoformat()
                         self.save_data()
             except Exception as e:
-                print(f"Error sending reminder to user {user_id}: {str(e)}")  # Debug log
+                print(f"Error sending reminder to user {user_id}: {str(e)}")
 
     def get_user_data(self, user_id: int):
         """Get or initialize user data"""
@@ -108,6 +128,7 @@ class TaskBot:
                 'tasks': [],
                 'categories': set(),
                 'reminder_frequency': '24h',
+                'reminder_time': '9am',
                 'last_reminder': datetime.now(pytz.timezone('Asia/Singapore')).strftime('%d-%m-%Y')
             }
         return self.user_data[user_id]
@@ -117,20 +138,55 @@ class TaskBot:
         user_id = update.effective_user.id
         user_data = self.get_user_data(user_id)
         
+        name = update.effective_user.first_name
         await update.message.reply_text(
-            f"Welcome to your Personal Task Manager!\n\n"
+            f"Welcome {name} to your Personal Task Manager!\n\n"
             f"Available commands:\n"
-            f"/new - Create a new task\n"
-            f"/tasklist - List all your tasks\n"
+            f"/new - Add new task\n"
+            f"/tasklist - Your list of tasks\n"
             f"/delete - Delete a task\n"
-            f"/frequency - Set reminder frequency\n"
-            f"/categories - Manage your categories"
+            f"/frequency - How often would you like to be reminded?\n"
+            f"/remindertime - What time would you like to be reminded?\n"
+            f"/categories - Your categories"
         )
+
+    async def set_reminder_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle the remindertime command"""
+        keyboard = [
+            [InlineKeyboardButton(details['label'], callback_data=f"time_{time}")]
+            for time, details in self.time_options.items()
+        ]
+        
+        await update.message.reply_text(
+            "Select what time in SGT you'd like to receive daily reminders:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return TIME_SELECTION
+    
+    async def handle_time_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle time selection callback"""
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = update.effective_user.id
+        selected_time = query.data.split('_')[1]
+        
+        user_data = self.get_user_data(user_id)
+        user_data['reminder_time'] = selected_time
+        self.save_data()
+        
+        # Restart reminder job to apply new time
+        self.setup_reminder_job()
+        
+        await query.message.reply_text(
+            f"Reminder time set to: {self.time_options[selected_time]['label']}"
+        )
+        return ConversationHandler.END
 
     async def new_task(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start the new task conversation"""
         user_id = update.effective_user.id
-        context.user_data['user_id'] = user_id  # Store user_id for later use
+        context.user_data['user_id'] = user_id
         await update.message.reply_text("What's the name of your task?")
         return TASK_NAME
 
@@ -139,7 +195,7 @@ class TaskBot:
         user_id = context.user_data['user_id']
         user_data = self.get_user_data(user_id)
         
-        # If we're expecting a new category name (set by receive_category)
+        # If expecting a new category name (set by receive_category)
         if context.user_data.get('waiting_for_new_category'):
             context.user_data['category'] = update.message.text
             context.user_data['waiting_for_new_category'] = False
@@ -230,11 +286,12 @@ class TaskBot:
         
         user_data = self.get_user_data(user_id)
         user_data['reminder_frequency'] = frequency
+        reminder_time = self.time_options[user_data.get('reminder_time', '9am')]['label']  # Get selected reminder time, default is 9am
         self.save_data()
         
         await query.message.reply_text(
             f"Reminder frequency set to: {self.frequency_options[frequency]['label']}\n"
-            f"You'll receive reminders at 9:00 AM (UTC+8)"
+            f"You'll receive reminders at {reminder_time} (UTC+8)"
         )
         return ConversationHandler.END
 
@@ -419,12 +476,22 @@ class TaskBot:
             fallbacks=[CommandHandler('cancel', self.cancel_task)]
         )
 
-        # Make sure these handlers are added in this specific order
+        # Reminder time conversation handler
+        time_conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('remindertime', self.set_reminder_time)],
+            states={
+                TIME_SELECTION: [CallbackQueryHandler(self.handle_time_selection)]
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel_task)]
+        )
+
+        # Handlers
         self.app.add_handler(CommandHandler('start', self.start))
-        self.app.add_handler(create_conv_handler)  # Put create_conv_handler early
+        self.app.add_handler(create_conv_handler)
         self.app.add_handler(CommandHandler('tasklist', self.tasklist))
         self.app.add_handler(delete_conv_handler)
         self.app.add_handler(freq_conv_handler)
+        self.app.add_handler(time_conv_handler)
         self.app.add_handler(CommandHandler('categories', self.list_categories))
 
     def run(self):
